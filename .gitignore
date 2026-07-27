@@ -1,0 +1,14 @@
+# Generated simulation executables
+*_sim
+*.vvp
+
+# Waveforms
+*.vcd
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Secrets
+.env
