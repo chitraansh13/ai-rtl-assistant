@@ -1,11 +1,16 @@
 import argparse
-import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import time
 from typing import List, Tuple
+
+# Add 'src' to sys.path to enable imports without installing
+repository_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(repository_root / "src"))
+
+from rtl_assistant.models.simulation import FinalStatus, SimulationReport
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -72,7 +77,7 @@ def is_success_line(line: str) -> bool:
     return False
 
 
-def classify_simulation_output(stdout: str, stderr: str, exit_code: int) -> Tuple[str, bool, int]:
+def classify_simulation_output(stdout: str, stderr: str, exit_code: int) -> Tuple[FinalStatus, bool, int]:
     """Classify the simulation output and return (final_status, simulation_passed, process_exit_code)."""
     has_failure = False
     has_success = False
@@ -85,26 +90,17 @@ def classify_simulation_output(stdout: str, stderr: str, exit_code: int) -> Tupl
 
     if has_failure:
         print("FINAL RESULT: FAIL")
-        return "FAIL", False, 1
+        return FinalStatus.FAIL, False, 1
     elif exit_code != 0:
         print(f"Simulation failed with exit code {exit_code}.", file=sys.stderr)
-        return "FAIL", False, 1
+        return FinalStatus.FAIL, False, 1
     elif has_success:
         print("FINAL RESULT: PASS")
-        return "PASS", True, 0
+        return FinalStatus.PASS, True, 0
     else:
         print("FINAL RESULT: UNKNOWN")
         print("The testbench did not print a recognizable pass or fail marker (e.g., 'PASS', 'PASSED', 'FAIL', or 'FAILED').")
-        return "UNKNOWN", False, 2
-
-
-def write_json_report(report_path_str: str, report_data: dict) -> None:
-    """Write the structured simulation report to a JSON file."""
-    report_path = Path(report_path_str)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report_data, f, indent=2)
-    print(f"JSON report saved to: {report_path.resolve()}")
+        return FinalStatus.UNKNOWN, False, 2
 
 
 def main() -> int:
@@ -115,12 +111,12 @@ def main() -> int:
 
     # Initialize the structured report dictionary
     report = {
-        "rtl_file": None,
-        "testbench_file": None,
-        "simulation_output_file": None,
+        "rtl_file": "",
+        "testbench_file": "",
+        "simulation_output_file": "",
         "compile_passed": False,
         "simulation_passed": False,
-        "final_status": "FAIL",
+        "final_status": FinalStatus.FAIL,
         "compile_exit_code": None,
         "simulation_exit_code": None,
         "compile_stdout": "",
@@ -155,6 +151,7 @@ def main() -> int:
             print(f"ERROR: {err_msg}", file=sys.stderr)
             report["error_type"] = "RTL_FILE_NOT_FOUND"
             report["error_message"] = err_msg
+            report["final_status"] = FinalStatus.FAIL
             exit_code = 1
             return exit_code
 
@@ -163,6 +160,7 @@ def main() -> int:
             print(f"ERROR: {err_msg}", file=sys.stderr)
             report["error_type"] = "TESTBENCH_FILE_NOT_FOUND"
             report["error_message"] = err_msg
+            report["final_status"] = FinalStatus.FAIL
             exit_code = 1
             return exit_code
 
@@ -192,6 +190,7 @@ def main() -> int:
                     print(result.stdout)
                 if result.stderr:
                     print(result.stderr)
+                report["final_status"] = FinalStatus.FAIL
                 exit_code = 1
                 return exit_code
 
@@ -206,6 +205,7 @@ def main() -> int:
             print(err_msg, file=sys.stderr)
             report["error_type"] = "IVERILOG_NOT_FOUND"
             report["error_message"] = err_msg
+            report["final_status"] = FinalStatus.FAIL
             exit_code = 1
             return exit_code
 
@@ -218,6 +218,7 @@ def main() -> int:
             report["compile_timed_out"] = True
             report["error_type"] = "COMPILATION_TIMEOUT"
             report["error_message"] = err_msg
+            report["final_status"] = FinalStatus.FAIL
             report["compile_stdout"] = e.stdout or ""
             report["compile_stderr"] = e.stderr or ""
             if e.stdout:
@@ -265,6 +266,7 @@ def main() -> int:
             print(f"ERROR: {err_msg}", file=sys.stderr)
             report["error_type"] = "VVP_NOT_FOUND"
             report["error_message"] = err_msg
+            report["final_status"] = FinalStatus.FAIL
             exit_code = 1
             return exit_code
 
@@ -276,6 +278,7 @@ def main() -> int:
             report["simulation_timed_out"] = True
             report["error_type"] = "SIMULATION_TIMEOUT"
             report["error_message"] = err_msg
+            report["final_status"] = FinalStatus.FAIL
             report["simulation_stdout"] = e.stdout or ""
             report["simulation_stderr"] = e.stderr or ""
             if e.stdout:
@@ -292,11 +295,22 @@ def main() -> int:
         # Write JSON report if requested
         if args.report:
             try:
-                write_json_report(args.report, report)
+                # Validate the report data using Pydantic SimulationReport
+                report_model = SimulationReport(**report)
+                serialized_json = report_model.model_dump_json(indent=2)
+
+                # Write the file
+                report_path = Path(args.report)
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(report_path, "w", encoding="utf-8") as f:
+                    f.write(serialized_json)
+                print(f"JSON report saved to: {report_path.resolve()}")
             except Exception as e:
-                # Do not silently ignore JSON write failures.
-                print(f"ERROR: Failed to write JSON report to {args.report}: {e}", file=sys.stderr)
-                raise
+                # Catch Pydantic validation or file write errors
+                print("INTERNAL ERROR: Report validation or generation failed!", file=sys.stderr)
+                print(f"Error details:\n{e}", file=sys.stderr)
+                # Ensure we return a non-zero exit code on failure
+                sys.exit(1)
 
 
 if __name__ == "__main__":
