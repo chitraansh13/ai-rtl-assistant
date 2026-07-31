@@ -23,6 +23,9 @@ module alu_4bit_tb;
     );
 
     initial begin
+        $dumpfile("examples/alu_4bit/alu_4bit.vcd");
+        $dumpvars(0, alu_4bit_tb);
+
         passed_tests = 0;
         failed_tests = 0;
 
