@@ -1,8 +1,10 @@
 import argparse
+import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from typing import List, Tuple
 
 
@@ -24,6 +26,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         help="Path to the output compiled simulation file (optional)."
+    )
+    parser.add_argument(
+        "--report",
+        help="Path to save the structured JSON report (optional)."
     )
     return parser.parse_args()
 
@@ -48,57 +54,6 @@ def run_command(command: List[str], timeout: float) -> subprocess.CompletedProce
     )
 
 
-def compile_design(rtl_path: Path, testbench_path: Path, output_path: Path) -> int:
-    """Compile the RTL and testbench files using iverilog."""
-    command = [
-        "iverilog",
-        "-g2012",
-        "-o",
-        str(output_path),
-        str(rtl_path),
-        str(testbench_path),
-    ]
-    print("Compiling design...")
-    try:
-        result = run_command(command, timeout=30.0)
-    except FileNotFoundError:
-        print("COMPILATION FAILED", file=sys.stderr)
-        print("Error: 'iverilog' executable not found. Make sure Icarus Verilog is installed and added to your PATH.", file=sys.stderr)
-        return 1
-    except subprocess.TimeoutExpired as e:
-        print("COMPILATION FAILED", file=sys.stderr)
-        print("Error: Compilation timed out after 30.0 seconds.", file=sys.stderr)
-        if e.stdout:
-            print(e.stdout)
-        if e.stderr:
-            print(e.stderr)
-        return 1
-
-    if result.returncode != 0:
-        print("COMPILATION FAILED", file=sys.stderr)
-        if result.stdout:
-            print(result.stdout)
-        if result.stderr:
-            print(result.stderr)
-        return 1
-
-    print("Compilation successful")
-    return 0
-
-
-def execute_simulation(output_path: Path) -> Tuple[int, str, str]:
-    """Execute the compiled simulation using vvp."""
-    command = ["vvp", str(output_path)]
-    print("Running simulation...")
-    try:
-        result = run_command(command, timeout=30.0)
-        return result.returncode, result.stdout or "", result.stderr or ""
-    except FileNotFoundError:
-        return -1, "", ""
-    except subprocess.TimeoutExpired as e:
-        return -2, e.stdout or "", e.stderr or ""
-
-
 def is_failure_line(line: str) -> bool:
     """Check if a line indicates a genuine failure."""
     # Ignore successful zero-failure summary lines
@@ -117,8 +72,8 @@ def is_success_line(line: str) -> bool:
     return False
 
 
-def classify_simulation_output(stdout: str, stderr: str, exit_code: int) -> int:
-    """Classify the simulation output to determine pass/fail status by examining line-by-line."""
+def classify_simulation_output(stdout: str, stderr: str, exit_code: int) -> Tuple[str, bool, int]:
+    """Classify the simulation output and return (final_status, simulation_passed, process_exit_code)."""
     has_failure = False
     has_success = False
 
@@ -130,67 +85,218 @@ def classify_simulation_output(stdout: str, stderr: str, exit_code: int) -> int:
 
     if has_failure:
         print("FINAL RESULT: FAIL")
-        return 1
+        return "FAIL", False, 1
     elif exit_code != 0:
         print(f"Simulation failed with exit code {exit_code}.", file=sys.stderr)
-        return 1
+        return "FAIL", False, 1
     elif has_success:
         print("FINAL RESULT: PASS")
-        return 0
+        return "PASS", True, 0
     else:
         print("FINAL RESULT: UNKNOWN")
         print("The testbench did not print a recognizable pass or fail marker (e.g., 'PASS', 'PASSED', 'FAIL', or 'FAILED').")
-        return 2
+        return "UNKNOWN", False, 2
+
+
+def write_json_report(report_path_str: str, report_data: dict) -> None:
+    """Write the structured simulation report to a JSON file."""
+    report_path = Path(report_path_str)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report_data, f, indent=2)
+    print(f"JSON report saved to: {report_path.resolve()}")
 
 
 def main() -> int:
+    total_start = time.perf_counter()
     repository_root = Path(__file__).resolve().parent.parent
 
     args = parse_arguments()
 
-    rtl_path = resolve_input_path(args.rtl, repository_root)
-    testbench_path = resolve_input_path(args.testbench, repository_root)
+    # Initialize the structured report dictionary
+    report = {
+        "rtl_file": None,
+        "testbench_file": None,
+        "simulation_output_file": None,
+        "compile_passed": False,
+        "simulation_passed": False,
+        "final_status": "FAIL",
+        "compile_exit_code": None,
+        "simulation_exit_code": None,
+        "compile_stdout": "",
+        "compile_stderr": "",
+        "simulation_stdout": "",
+        "simulation_stderr": "",
+        "compile_timed_out": False,
+        "simulation_timed_out": False,
+        "compile_duration_ms": None,
+        "simulation_duration_ms": None,
+        "total_duration_ms": 0,
+    }
 
-    if not rtl_path.exists() or not rtl_path.is_file():
-        print(f"ERROR: RTL file not found or is not a file: {rtl_path}", file=sys.stderr)
-        return 1
+    exit_code = 1
 
-    if not testbench_path.exists() or not testbench_path.is_file():
-        print(f"ERROR: Testbench file not found or is not a file: {testbench_path}", file=sys.stderr)
-        return 1
+    try:
+        rtl_path = resolve_input_path(args.rtl, repository_root)
+        testbench_path = resolve_input_path(args.testbench, repository_root)
 
-    if args.output:
-        output_path = resolve_input_path(args.output, repository_root)
-    else:
-        output_path = testbench_path.parent / "simulation_output.vvp"
+        report["rtl_file"] = str(rtl_path)
+        report["testbench_file"] = str(testbench_path)
 
-    # Compile design
-    compile_exit = compile_design(rtl_path, testbench_path, output_path)
-    if compile_exit != 0:
-        return compile_exit
+        if args.output:
+            output_path = resolve_input_path(args.output, repository_root)
+        else:
+            output_path = testbench_path.parent / "simulation_output.vvp"
+        report["simulation_output_file"] = str(output_path)
 
-    # Execute simulation
-    return_code, stdout, stderr = execute_simulation(output_path)
+        # 1. Verify files exist
+        if not rtl_path.exists() or not rtl_path.is_file():
+            err_msg = f"RTL file not found or is not a file: {rtl_path}"
+            print(f"ERROR: {err_msg}", file=sys.stderr)
+            report["error_type"] = "RTL_FILE_NOT_FOUND"
+            report["error_message"] = err_msg
+            exit_code = 1
+            return exit_code
 
-    if return_code == -1:
-        print("ERROR: 'vvp' executable not found. Make sure Icarus Verilog is installed and added to your PATH.", file=sys.stderr)
-        return 1
-    elif return_code == -2:
-        print("ERROR: Simulation timed out after 30 seconds.", file=sys.stderr)
-        if stdout:
-            print(stdout, end="")
-        if stderr:
-            print(stderr, end="", file=sys.stderr)
-        return 1
+        if not testbench_path.exists() or not testbench_path.is_file():
+            err_msg = f"Testbench file not found or is not a file: {testbench_path}"
+            print(f"ERROR: {err_msg}", file=sys.stderr)
+            report["error_type"] = "TESTBENCH_FILE_NOT_FOUND"
+            report["error_message"] = err_msg
+            exit_code = 1
+            return exit_code
 
-    # Print captured stdout and stderr
-    if stdout:
-        print(stdout, end="")
-    if stderr:
-        print(stderr, end="", file=sys.stderr)
+        # 2. Compile Design
+        compile_start = time.perf_counter()
+        compile_command = [
+            "iverilog",
+            "-g2012",
+            "-o",
+            str(output_path),
+            str(rtl_path),
+            str(testbench_path),
+        ]
+        print("Compiling design...")
+        try:
+            result = run_command(compile_command, timeout=30.0)
+            compile_end = time.perf_counter()
+            report["compile_duration_ms"] = int((compile_end - compile_start) * 1000)
 
-    # Classify the simulation output
-    return classify_simulation_output(stdout, stderr, return_code)
+            report["compile_exit_code"] = result.returncode
+            report["compile_stdout"] = result.stdout or ""
+            report["compile_stderr"] = result.stderr or ""
+
+            if result.returncode != 0:
+                print("COMPILATION FAILED", file=sys.stderr)
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr)
+                exit_code = 1
+                return exit_code
+
+            report["compile_passed"] = True
+            print("Compilation successful")
+
+        except FileNotFoundError:
+            compile_end = time.perf_counter()
+            report["compile_duration_ms"] = int((compile_end - compile_start) * 1000)
+            err_msg = "Error: 'iverilog' executable not found. Make sure Icarus Verilog is installed and added to your PATH."
+            print("COMPILATION FAILED", file=sys.stderr)
+            print(err_msg, file=sys.stderr)
+            report["error_type"] = "IVERILOG_NOT_FOUND"
+            report["error_message"] = err_msg
+            exit_code = 1
+            return exit_code
+
+        except subprocess.TimeoutExpired as e:
+            compile_end = time.perf_counter()
+            report["compile_duration_ms"] = int((compile_end - compile_start) * 1000)
+            err_msg = "Error: Compilation timed out after 30.0 seconds."
+            print("COMPILATION FAILED", file=sys.stderr)
+            print(err_msg, file=sys.stderr)
+            report["compile_timed_out"] = True
+            report["error_type"] = "COMPILATION_TIMEOUT"
+            report["error_message"] = err_msg
+            report["compile_stdout"] = e.stdout or ""
+            report["compile_stderr"] = e.stderr or ""
+            if e.stdout:
+                print(e.stdout)
+            if e.stderr:
+                print(e.stderr)
+            exit_code = 1
+            return exit_code
+
+        # 3. Execute Simulation
+        sim_start = time.perf_counter()
+        sim_command = ["vvp", str(output_path)]
+        print("Running simulation...")
+        try:
+            sim_result = run_command(sim_command, timeout=30.0)
+            sim_end = time.perf_counter()
+            report["simulation_duration_ms"] = int((sim_end - sim_start) * 1000)
+
+            report["simulation_exit_code"] = sim_result.returncode
+            report["simulation_stdout"] = sim_result.stdout or ""
+            report["simulation_stderr"] = sim_result.stderr or ""
+
+            stdout = sim_result.stdout or ""
+            stderr = sim_result.stderr or ""
+
+            # Print captured stdout and stderr
+            if stdout:
+                print(stdout, end="")
+            if stderr:
+                print(stderr, end="", file=sys.stderr)
+
+            # Classify simulation output
+            final_status, simulation_passed, status_exit_code = classify_simulation_output(
+                stdout, stderr, sim_result.returncode
+            )
+            report["final_status"] = final_status
+            report["simulation_passed"] = simulation_passed
+            exit_code = status_exit_code
+            return exit_code
+
+        except FileNotFoundError:
+            sim_end = time.perf_counter()
+            report["simulation_duration_ms"] = int((sim_end - sim_start) * 1000)
+            err_msg = "Error: 'vvp' executable not found. Make sure Icarus Verilog is installed and added to your PATH."
+            print(f"ERROR: {err_msg}", file=sys.stderr)
+            report["error_type"] = "VVP_NOT_FOUND"
+            report["error_message"] = err_msg
+            exit_code = 1
+            return exit_code
+
+        except subprocess.TimeoutExpired as e:
+            sim_end = time.perf_counter()
+            report["simulation_duration_ms"] = int((sim_end - sim_start) * 1000)
+            err_msg = "Error: Simulation timed out after 30 seconds."
+            print(f"ERROR: {err_msg}", file=sys.stderr)
+            report["simulation_timed_out"] = True
+            report["error_type"] = "SIMULATION_TIMEOUT"
+            report["error_message"] = err_msg
+            report["simulation_stdout"] = e.stdout or ""
+            report["simulation_stderr"] = e.stderr or ""
+            if e.stdout:
+                print(e.stdout, end="")
+            if e.stderr:
+                print(e.stderr, end="", file=sys.stderr)
+            exit_code = 1
+            return exit_code
+
+    finally:
+        total_end = time.perf_counter()
+        report["total_duration_ms"] = int((total_end - total_start) * 1000)
+
+        # Write JSON report if requested
+        if args.report:
+            try:
+                write_json_report(args.report, report)
+            except Exception as e:
+                # Do not silently ignore JSON write failures.
+                print(f"ERROR: Failed to write JSON report to {args.report}: {e}", file=sys.stderr)
+                raise
 
 
 if __name__ == "__main__":
