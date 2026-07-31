@@ -15,6 +15,9 @@ module mux_2to1_tb;
     );
 
     initial begin
+        $dumpfile("examples/mux_2to1/mux_2to1.vcd");
+        $dumpvars(0, mux_2to1_tb);
+
         $display("Starting 2:1 MUX test");
 
         a = 0;
