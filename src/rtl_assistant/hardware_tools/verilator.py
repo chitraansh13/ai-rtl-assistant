@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -20,8 +21,28 @@ def to_wsl_path(path: str | Path) -> str:
     return path_str
 
 
+def build_verilator_command(rtl_path: Path) -> Tuple[List[str], str, str]:
+    """Build the Verilator command list, path string, and execution mode based on the current OS."""
+    resolved_path = rtl_path.resolve()
+    
+    if sys.platform.startswith("win32"):
+        wsl_path = to_wsl_path(resolved_path)
+        command = ["wsl", "verilator", "--lint-only", "-Wall", wsl_path]
+        return command, wsl_path, "windows_wsl"
+        
+    elif sys.platform.startswith("darwin"):
+        native_path = str(resolved_path)
+        command = ["verilator", "--lint-only", "-Wall", native_path]
+        return command, native_path, "native_macos"
+        
+    else:  # Linux and other unix-like environments
+        native_path = str(resolved_path)
+        command = ["verilator", "--lint-only", "-Wall", native_path]
+        return command, native_path, "native_linux"
+
+
 def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintReport:
-    """Run Verilator linter on the specified RTL file via WSL."""
+    """Run Verilator linter on the specified RTL file via the platform-appropriate method."""
     start_time = time.perf_counter()
     rtl_path_obj = Path(rtl_path)
     
@@ -44,10 +65,7 @@ def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintR
             error_message=f"RTL file not found or is not a file: {rtl_path_obj}"
         )
         
-    wsl_rtl_path = to_wsl_path(rtl_path_obj)
-    
-    # 2. Run Verilator command via WSL
-    command = ["wsl", "verilator", "--lint-only", "-Wall", wsl_rtl_path]
+    command, lint_file_path, platform_mode = build_verilator_command(rtl_path_obj)
     
     try:
         result = subprocess.run(
@@ -64,9 +82,13 @@ def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintR
         stderr = result.stderr or ""
         exit_code = result.returncode
         
-        # Check if Verilator command not found inside WSL or WSL failed
-        # Typically WSL returns exit code 127 if command inside it is not found
+        # Check if Verilator command not found (inside WSL or natively)
         if exit_code == 127 or "command not found" in stderr.lower() or "not found" in stderr.lower():
+            err_msg = (
+                "Verilator command not found inside WSL. Ensure it is installed in your WSL distribution."
+                if platform_mode == "windows_wsl" else
+                "Verilator command not found on the host machine. Ensure it is installed and added to your PATH."
+            )
             return LintReport(
                 rtl_file=str(rtl_path_obj),
                 tool="verilator",
@@ -80,7 +102,7 @@ def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintR
                 timed_out=False,
                 duration_ms=duration,
                 error_type="VERILATOR_NOT_FOUND",
-                error_message="Verilator command not found inside WSL. Ensure it is installed in your WSL distribution."
+                error_message=err_msg
             )
             
         # Parse warnings and errors
@@ -94,7 +116,6 @@ def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintR
                 errors.append(line)
                 
         # Determine status and lint_passed
-        # FAIL if nonzero exit code, any parsed Errors, or timeout/tool missing
         if exit_code != 0 or len(errors) > 0:
             status = LintStatus.FAIL
             lint_passed = False
@@ -121,6 +142,13 @@ def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintR
         
     except FileNotFoundError:
         duration = int((time.perf_counter() - start_time) * 1000)
+        if platform_mode == "windows_wsl":
+            err_type = "WSL_NOT_FOUND"
+            err_msg = "WSL executable not found on the host machine. Ensure WSL is enabled and in your PATH."
+        else:
+            err_type = "VERILATOR_NOT_FOUND"
+            err_msg = "Verilator executable not found on the host machine. Ensure it is installed and added to your PATH."
+            
         return LintReport(
             rtl_file=str(rtl_path_obj),
             tool="verilator",
@@ -133,8 +161,8 @@ def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintR
             errors=[],
             timed_out=False,
             duration_ms=duration,
-            error_type="WSL_NOT_FOUND",
-            error_message="WSL executable not found on the host machine. Ensure WSL is enabled and in your PATH."
+            error_type=err_type,
+            error_message=err_msg
         )
     except subprocess.TimeoutExpired as e:
         duration = int((time.perf_counter() - start_time) * 1000)
