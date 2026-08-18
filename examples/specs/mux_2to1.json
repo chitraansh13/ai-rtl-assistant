@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "module_name": "mux_2to1",
+  "design_type": "combinational",
+  "description": "2-to-1 combinational multiplexer.",
+  "parameters": [],
+  "ports": [
+    {
+      "name": "a",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "data",
+      "description": "Data input selected when select is 0."
+    },
+    {
+      "name": "b",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "data",
+      "description": "Data input selected when select is 1."
+    },
+    {
+      "name": "select",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "control",
+      "description": "Select control for the mux."
+    },
+    {
+      "name": "y",
+      "direction": "output",
+      "width": 1,
+      "signed": false,
+      "role": "data",
+      "description": "Mux output."
+    }
+  ],
+  "clock": null,
+  "reset": null,
+  "behavior": {
+    "description": "Routes one of two 1-bit inputs to the output based on select.",
+    "operations": [
+      "MUX"
+    ],
+    "rules": [
+      "When select is 0, output y equals a.",
+      "When select is 1, output y equals b."
+    ],
+    "assumptions": []
+  },
+  "tags": [
+    "mux",
+    "combinational",
+    "example"
+  ]
+}

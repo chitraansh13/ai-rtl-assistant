@@ -1,212 +1,199 @@
 # AI-Driven RTL Design and Verification Assistant
 
-An AI-assisted platform for generating, simulating, verifying, debugging, and eventually synthesizing Verilog/SystemVerilog RTL designs from natural-language hardware specifications.
+A Python-based project for deterministic verification of small SystemVerilog designs, with a structured hardware specification layer that is intended to support future AI-assisted RTL generation.
 
-> **Project status:** Early development. RTL simulation, waveform generation, automated result classification, and structured JSON reporting are currently available. AI-based RTL generation has not yet been integrated.
+The current repository does **not** yet implement natural-language parsing or AI RTL generation. Today, RTL and testbenches are written manually, then checked by a reproducible verification pipeline.
 
 ---
 
 ## Overview
 
-The final system will accept a hardware requirement such as:
-
-> Create a 4-bit ALU supporting ADD, SUB, AND, and OR.
-
-It will eventually:
-
-1. Convert the requirement into a structured hardware specification.
-2. Generate synthesizable RTL.
-3. Generate verification testbenches.
-4. Compile and simulate the design.
-5. Detect compilation and functional failures.
-6. Attempt automatic RTL repair.
-7. Run synthesis and generate hardware reports.
-8. Present the workflow through a web dashboard.
-
-The project follows one core principle:
-
-> AI generates candidate hardware designs, while deterministic hardware tools verify whether they are correct.
-
----
-
-## Current Features
+### What is implemented now
 
 - SystemVerilog RTL examples
 - Self-checking SystemVerilog testbenches
-- RTL compilation using Icarus Verilog
-- Simulation using `vvp`
-- Generic Python simulation runner
-- PASS, FAIL, and UNKNOWN result classification
-- Missing-file and timeout handling
+- Example designs:
+  - 2-to-1 MUX
+  - 4-bit ALU
+  - 4-bit synchronous counter
 - VCD waveform generation
-- GTKWave waveform inspection
-- Structured JSON simulation reports
-- Typed report validation using Pydantic v2
+- GTKWave-based waveform inspection for debugging
+- Icarus Verilog compilation
+- `vvp` functional simulation
+- PASS / FAIL / UNKNOWN result classification
+- Typed Pydantic simulation reports
+- Verilator linting
+- Typed lint reports
+- Yosys synthesis
+- Parsed synthesis statistics:
+  - wire count
+  - wire-bit count
+  - cell count
+  - cell types
+- Cross-platform hardware-tool execution:
+  - Windows: Verilator and Yosys through WSL, Icarus native
+  - macOS/Linux: native tools
+- Unified deterministic verification pipeline
+- Nested typed JSON `VerificationReport`
+- Structured Pydantic `HardwareSpec`
+- Hardware specifications for:
+  - MUX
+  - ALU
+  - counter
+- HardwareSpec validation CLI
 
----
-
-## Current Example Modules
-
-- 2-to-1 Multiplexer
-- 4-bit ALU
-- 4-bit synchronous counter — in progress
-
----
-
-## Current Pipeline
+### Current verification flow
 
 ```text
-RTL file
-    ↓
-Testbench
-    ↓
-Python simulation runner
-    ↓
-Icarus Verilog compilation
-    ↓
-vvp simulation
-    ↓
+Structured HardwareSpec
+        ↓
+Manually written SystemVerilog RTL
+        ↓
+┌──────────────────────────┐
+│ Verilator lint           │
+│ Icarus compile/simulate  │
+│ Yosys synthesis          │
+└──────────────────────────┘
+        ↓
+Typed VerificationReport
+        ↓
 PASS / FAIL / UNKNOWN
-    ↓
-Validated JSON report
-    ↓
-VCD waveform
 ```
 
-## Technologies
+### Planned future AI flow
 
-### Currently used
-- Python
-- Pydantic v2
-- SystemVerilog
+```text
+Natural-language requirement
+        ↓
+HardwareSpec
+        ↓
+AI RTL generation
+        ↓
+Deterministic verification engine
+```
+
+That future AI layer is planned work, not current functionality.
+
+---
+
+## Why Multiple Tools Are Used
+
+The project intentionally combines different deterministic hardware tools because they answer different questions:
+
+- Verilator checks lint, structural issues, and common RTL quality problems.
+- Icarus Verilog plus a self-checking testbench checks functional behavior.
+- Yosys checks that the RTL is synthesizable and reports inferred hardware structure.
+
+These tools are complementary. A design can legitimately produce:
+
+```text
+Lint       PASS
+Simulation FAIL
+Synthesis  PASS
+```
+
+This project has already validated that case using an intentionally incorrect ALU operation: syntactically valid and synthesizable RTL can still implement the wrong functionality.
+
+---
+
+## Current Example Designs
+
+- `examples/mux_2to1/`
+- `examples/alu_4bit/`
+- `examples/4bit_counter/`
+
+The repository also contains some additional experimental material, but the designs above are the current documented examples for the deterministic pipeline and HardwareSpec layer.
+
+---
+
+## Platform Requirements
+
+### Windows
+
+- Python 3.10+
+- Icarus Verilog / `vvp` available natively
+- WSL
+- Verilator installed inside WSL
+- Yosys installed inside WSL
+
+### macOS
+
+- Python 3
 - Icarus Verilog
-- `vvp`
-- GTKWave
-- Git
-- GitHub
-
-### Planned
 - Verilator
 - Yosys
-- Ollama
-- FastAPI
-- PostgreSQL
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-- Docker
+- Homebrew is a practical installation path for the hardware tools
 
-## Repository Structure
+### Linux
 
-```text
-ai-rtl-assistant/
-├── README.md
-├── requirements.txt
-├── .gitignore
-│
-├── examples/
-│   ├── mux_2to1/
-│   │   ├── mux_2to1.sv
-│   │   ├── mux_2to1_tb.sv
-│   │   └── specification.md
-│   │
-│   └── alu_4bit/
-│       ├── alu_4bit.sv
-│       ├── alu_4bit_tb.sv
-│       └── specification.md
-│
-├── scripts/
-│   └── run_simulation.py
-│
-├── src/
-│   └── rtl_assistant/
-│       ├── __init__.py
-│       └── models/
-│           ├── __init__.py
-│           └── simulation.py
-│
-└── docs/
-```
-
-Generated files such as `.vvp`, `.vcd`, simulation executables, and JSON reports are ignored by Git.
-
-## Prerequisites
-
-Install:
-- Git
-- Python 3.10 or newer
+- Python 3
 - Icarus Verilog
-- GTKWave
+- Verilator
+- Yosys
 
-Verify the installations:
-```bash
-python --version
-iverilog -V
-vvp -V
-gtkwave --version
-```
+GTKWave is useful for waveform inspection and debugging, but it is not required to run the core verification pipeline.
+
+---
 
 ## Setup
 
 ### 1. Clone the repository
+
 ```bash
 git clone https://github.com/chitraansh13/ai-rtl-assistant.git
 cd ai-rtl-assistant
 ```
 
-### 2. Create a virtual environment
+### 2. Create and activate a virtual environment
+
 ```bash
 python -m venv .venv
 ```
 
-Activate it in Git Bash on Windows:
+Git Bash on Windows:
+
 ```bash
 source .venv/Scripts/activate
 ```
 
-On PowerShell:
+PowerShell on Windows:
+
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-On Linux or macOS:
+Linux or macOS:
+
 ```bash
 source .venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install Python dependencies
+
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## Running a Simulation
+---
 
-The simulation runner accepts an RTL file and its testbench.
+## Usage
 
-### Run the 2-to-1 MUX
+### Validate a HardwareSpec
+
 ```bash
-python scripts/run_simulation.py \
-  --rtl examples/mux_2to1/mux_2to1.sv \
-  --testbench examples/mux_2to1/mux_2to1_tb.sv
+python scripts/validate_spec.py examples/specs/alu_4bit.json
 ```
 
-### Run the 4-bit ALU
+### Run lint only
+
 ```bash
-python scripts/run_simulation.py \
-  --rtl examples/alu_4bit/alu_4bit.sv \
-  --testbench examples/alu_4bit/alu_4bit_tb.sv
+python scripts/run_lint.py \
+  --rtl examples/alu_4bit/alu_4bit.sv
 ```
 
-A successful execution ends with:
-```text
-FINAL RESULT: PASS
-```
+### Run simulation only
 
-## Generate a JSON Report
-
-Use the optional `--report` argument:
 ```bash
 python scripts/run_simulation.py \
   --rtl examples/alu_4bit/alu_4bit.sv \
@@ -214,148 +201,155 @@ python scripts/run_simulation.py \
   --report reports/alu_result.json
 ```
 
-View the generated report:
+### Run synthesis only
+
 ```bash
-cat reports/alu_result.json
+python scripts/run_synthesis.py \
+  --rtl examples/alu_4bit/alu_4bit.sv \
+  --top alu_4bit \
+  --report reports/alu_synthesis.json
 ```
 
-Example:
-```json
-{
-  "compile_passed": true,
-  "simulation_passed": true,
-  "final_status": "PASS",
-  "compile_exit_code": 0,
-  "simulation_exit_code": 0,
-  "compile_timed_out": false,
-  "simulation_timed_out": false,
-  "compile_duration_ms": 52,
-  "simulation_duration_ms": 14,
-  "total_duration_ms": 69,
-  "error_type": null,
-  "error_message": null
-}
+### Run complete verification
+
+```bash
+python scripts/verify_rtl.py \
+  --rtl examples/alu_4bit/alu_4bit.sv \
+  --testbench examples/alu_4bit/alu_4bit_tb.sv \
+  --top alu_4bit \
+  --report reports/alu_verification.json
 ```
 
-The complete report also includes:
-- RTL and testbench paths
-- Compiler output
-- Simulator output
-- Exit codes
-- Stage durations
-- Timeout information
-- Structured error information
+A successful full verification run prints a concise stage summary like:
 
-## Result Statuses
+```text
+Lint:       PASS
+Simulation: PASS
+Synthesis:  PASS
 
-### PASS
-The RTL compiled, the simulation ran, and all functional tests passed.
-
-Process exit code: `0`
-
-### FAIL
-Possible causes include:
-- Missing RTL or testbench file
-- Compilation error
-- Simulator error
-- Timeout
-- Functional test failure
-
-Process exit code: `1`
-
-### UNKNOWN
-The simulation completed, but the testbench did not print a recognizable PASS or FAIL result.
-
-Process exit code: `2`
-
-## Compilation Success vs Functional Correctness
-
-A design can compile successfully and still be functionally wrong.
-
-Example:
-```json
-{
-  "compile_passed": true,
-  "simulation_exit_code": 0,
-  "simulation_passed": false,
-  "final_status": "FAIL"
-}
+Overall:    PASS
 ```
 
-This means:
-- The SystemVerilog syntax was valid.
-- The simulator executed successfully.
-- The testbench detected incorrect hardware behaviour.
+The unified JSON output nests the typed lint, simulation, and synthesis reports inside a typed `VerificationReport`.
 
-## Viewing Waveforms
+---
 
-The current testbenches generate VCD waveform files.
+## HardwareSpec Layer
 
-### MUX waveform
-Run the MUX simulation, then open:
+The repository now includes a structured `HardwareSpec` model that represents a hardware design independently from any future AI system.
+
+It currently supports:
+
+- module name
+- design type (`combinational` or `sequential`)
+- parameters
+- ports with direction, width, signedness, and role
+- optional clock metadata
+- optional reset metadata
+- structured behavioral descriptions
+- tags
+
+Current cross-field validation includes:
+
+- port widths must be at least 1
+- duplicate ports are rejected
+- duplicate parameters are rejected
+- clock signals must be valid declared input ports
+- reset signals must be valid declared input ports
+- sequential designs must define a clock
+- combinational designs reject clock/reset metadata in this first version
+
+Example specs live in:
+
+- `examples/specs/mux_2to1.json`
+- `examples/specs/alu_4bit.json`
+- `examples/specs/counter_4bit.json`
+
+---
+
+## Waveforms and Debugging
+
+The self-checking testbenches generate VCD waveforms, which can be inspected in GTKWave when debugging behavior.
+
+Examples:
+
 ```bash
 gtkwave examples/mux_2to1/mux_2to1.vcd
 ```
 
-Inspect:
-- `a`
-- `b`
-- `select`
-- `y`
-
-Expected behaviour:
-- `select = 0` → `y` follows `a`
-- `select = 1` → `y` follows `b`
-
-### ALU waveform
-Run the ALU simulation, then open:
 ```bash
 gtkwave examples/alu_4bit/alu_4bit.vcd
 ```
 
-Inspect:
-- `a`
-- `b`
-- `opcode`
-- `result`
-- `carry`
-- `zero`
+Waveform viewing is optional, but helpful when a design fails functional simulation.
 
-ALU opcode mapping:
+---
 
-| Opcode | Operation |
-| :--- | :--- |
-| `00` | ADD |
-| `01` | SUB |
-| `10` | AND |
-| `11` | OR |
+## Repository Structure
 
-## Adding a New RTL Module
-
-Create a folder inside `examples/`:
 ```text
-examples/<module_name>/
-├── <module_name>.sv
-├── <module_name>_tb.sv
-└── specification.md
+scripts/
+  run_lint.py
+  run_simulation.py
+  run_synthesis.py
+  verify_rtl.py
+  validate_spec.py
+
+src/rtl_assistant/
+  models/
+    lint.py
+    simulation.py
+    synthesis.py
+    verification.py
+    hardware_spec.py
+
+  hardware_tools/
+    platform.py
+    verilator.py
+    iverilog.py
+    yosys.py
+
+  pipeline/
+    verification.py
+
+examples/
+  mux_2to1/
+  alu_4bit/
+  4bit_counter/
+  specs/
+  fifo_sync/
 ```
 
-The testbench should:
-- Be self-checking
-- Print clear `PASS` and `FAIL` messages
-- Report expected and actual values
-- End using `$finish`
-- Optionally generate a VCD waveform
+---
 
-Run the module using:
-```bash
-python scripts/run_simulation.py \
-  --rtl examples/<module_name>/<module_name>.sv \
-  --testbench examples/<module_name>/<module_name>_tb.sv \
-  --report reports/<module_name>_result.json
-```
+## Progress
 
-The Python runner is module-independent and does not need to be modified for each new design.
+Completed:
+
+- Project setup
+- Manual RTL + testbenches
+- Waveform generation/debugging
+- Python simulation automation
+- Structured simulation results
+- Verilator linting
+- Yosys synthesis
+- Unified deterministic verification pipeline
+- Structured HardwareSpec
+
+Planned next:
+
+- Ollama / local LLM provider integration
+- natural-language to HardwareSpec parsing
+- ambiguity and clarification handling
+- AI RTL generation
+- verification-plan and testbench generation
+- failure classification
+- automatic RTL repair
+- storage / backend / frontend
+- benchmarks and evaluation
+- optional RAG / formal / FPGA extensions
+
+---
 
 ## License
 

@@ -1,44 +1,16 @@
 import subprocess
-import sys
 import time
 from pathlib import Path
-from typing import List, Tuple, Optional
+
+from rtl_assistant.hardware_tools.platform import adapt_path_for_host_tool, unix_tool_platform_mode, unix_tool_prefix
 from rtl_assistant.models.lint import LintStatus, LintReport
 
 
-def to_wsl_path(path: str | Path) -> str:
-    """Convert a Windows absolute path to a WSL path, leaving Unix-style paths intact."""
-    path_str = str(path).replace('\\', '/')
-    
-    # Check if path starts with a Windows drive letter, e.g. E:/... or e:/...
-    if len(path_str) >= 2 and path_str[1] == ':' and path_str[0].isalpha():
-        drive = path_str[0].lower()
-        rest = path_str[2:]
-        if not rest.startswith('/'):
-            rest = '/' + rest
-        return f"/mnt/{drive}{rest}"
-        
-    return path_str
-
-
-def build_verilator_command(rtl_path: Path) -> Tuple[List[str], str, str]:
+def build_verilator_command(rtl_path: Path) -> tuple[list[str], str, str]:
     """Build the Verilator command list, path string, and execution mode based on the current OS."""
-    resolved_path = rtl_path.resolve()
-    
-    if sys.platform.startswith("win32"):
-        wsl_path = to_wsl_path(resolved_path)
-        command = ["wsl", "verilator", "--lint-only", "-Wall", wsl_path]
-        return command, wsl_path, "windows_wsl"
-        
-    elif sys.platform.startswith("darwin"):
-        native_path = str(resolved_path)
-        command = ["verilator", "--lint-only", "-Wall", native_path]
-        return command, native_path, "native_macos"
-        
-    else:  # Linux and other unix-like environments
-        native_path = str(resolved_path)
-        command = ["verilator", "--lint-only", "-Wall", native_path]
-        return command, native_path, "native_linux"
+    tool_path = adapt_path_for_host_tool(rtl_path)
+    command = [*unix_tool_prefix("verilator"), "--lint-only", "-Wall", tool_path]
+    return command, tool_path, unix_tool_platform_mode()
 
 
 def run_verilator_lint(rtl_path: str | Path, timeout_seconds: int = 30) -> LintReport:

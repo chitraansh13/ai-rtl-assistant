@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "module_name": "counter_4bit",
+  "design_type": "sequential",
+  "description": "4-bit synchronous up-counter with enable and synchronous active-high reset.",
+  "parameters": [],
+  "ports": [
+    {
+      "name": "clk",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "clock",
+      "description": "Primary clock input."
+    },
+    {
+      "name": "rst",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "reset",
+      "description": "Synchronous active-high reset."
+    },
+    {
+      "name": "en",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "control",
+      "description": "Enable incrementing when high."
+    },
+    {
+      "name": "count",
+      "direction": "output",
+      "width": 4,
+      "signed": false,
+      "role": "status",
+      "description": "Current 4-bit counter state."
+    }
+  ],
+  "clock": {
+    "signal": "clk",
+    "edge": "positive"
+  },
+  "reset": {
+    "signal": "rst",
+    "type": "synchronous",
+    "polarity": "active_high",
+    "priority": "reset overrides enable on each rising clock edge",
+    "reset_values": {
+      "count": 0
+    }
+  },
+  "behavior": {
+    "description": "Updates count on each positive edge of clk using synchronous reset and enable control.",
+    "operations": [
+      "INCREMENT",
+      "HOLD",
+      "RESET"
+    ],
+    "rules": [
+      "On each positive clock edge, if rst is high then count becomes 0.",
+      "Otherwise, if en is high then count increments by 1.",
+      "Otherwise, count holds its previous value.",
+      "Because count is 4 bits wide, incrementing wraps around modulo 16."
+    ],
+    "assumptions": []
+  },
+  "tags": [
+    "counter",
+    "sequential",
+    "4bit",
+    "example"
+  ]
+}

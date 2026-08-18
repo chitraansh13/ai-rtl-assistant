@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0",
+  "module_name": "alu_4bit",
+  "design_type": "combinational",
+  "description": "4-bit combinational ALU with arithmetic and logic operations.",
+  "parameters": [],
+  "ports": [
+    {
+      "name": "a",
+      "direction": "input",
+      "width": 4,
+      "signed": false,
+      "role": "data",
+      "description": "First 4-bit operand."
+    },
+    {
+      "name": "b",
+      "direction": "input",
+      "width": 4,
+      "signed": false,
+      "role": "data",
+      "description": "Second 4-bit operand."
+    },
+    {
+      "name": "opcode",
+      "direction": "input",
+      "width": 2,
+      "signed": false,
+      "role": "control",
+      "description": "Operation selector."
+    },
+    {
+      "name": "result",
+      "direction": "output",
+      "width": 4,
+      "signed": false,
+      "role": "data",
+      "description": "4-bit ALU result."
+    },
+    {
+      "name": "carry",
+      "direction": "output",
+      "width": 1,
+      "signed": false,
+      "role": "status",
+      "description": "Carry-out flag for addition."
+    },
+    {
+      "name": "zero",
+      "direction": "output",
+      "width": 1,
+      "signed": false,
+      "role": "status",
+      "description": "Asserted when result equals zero."
+    }
+  ],
+  "clock": null,
+  "reset": null,
+  "behavior": {
+    "description": "Computes one of four ALU operations selected by opcode and drives result, carry, and zero.",
+    "operations": [
+      "ADD",
+      "SUB",
+      "AND",
+      "OR"
+    ],
+    "rules": [
+      "Opcode 00 performs ADD: {carry, result} = a + b.",
+      "Opcode 01 performs SUB: result = a - b and carry remains 0.",
+      "Opcode 10 performs AND: result = a & b.",
+      "Opcode 11 performs OR: result = a | b.",
+      "Zero is 1 when result equals 0000, otherwise 0.",
+      "Carry is only produced by the ADD operation in the current RTL."
+    ],
+    "assumptions": [
+      "Result width is fixed at 4 bits.",
+      "Opcode encoding matches the existing RTL example."
+    ]
+  },
+  "tags": [
+    "alu",
+    "combinational",
+    "4bit",
+    "example"
+  ]
+}
