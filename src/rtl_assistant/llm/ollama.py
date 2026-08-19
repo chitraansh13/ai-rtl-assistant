@@ -4,6 +4,7 @@ import time
 from urllib import error, request
 
 from rtl_assistant.llm.base import LLMProvider
+from rtl_assistant.llm.config import get_default_ollama_base_url, get_default_ollama_model
 from rtl_assistant.models.llm import LLMResponse, LLMStatus
 
 
@@ -12,12 +13,14 @@ class OllamaProvider(LLMProvider):
 
     def __init__(
         self,
-        model: str = "qwen2.5-coder:7b",
-        base_url: str = "http://localhost:11434",
+        model: str | None = None,
+        base_url: str | None = None,
         timeout_seconds: int = 60,
     ) -> None:
-        self._model = model.strip()
-        self._base_url = base_url.rstrip("/")
+        resolved_model = model if model is not None else get_default_ollama_model()
+        resolved_base_url = base_url if base_url is not None else get_default_ollama_base_url()
+        self._model = resolved_model.strip()
+        self._base_url = resolved_base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
 
     @property

@@ -6,6 +6,7 @@ from pathlib import Path
 repository_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repository_root / "src"))
 
+from rtl_assistant.llm.config import get_default_ollama_base_url, get_default_ollama_model
 from rtl_assistant.llm.ollama import OllamaProvider
 
 
@@ -14,8 +15,8 @@ def parse_arguments() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Send a simple prompt directly to OllamaProvider.")
     parser.add_argument("prompt", help="Prompt text to send to the provider.")
-    parser.add_argument("--model", default="qwen2.5-coder:7b", help="Ollama model name.")
-    parser.add_argument("--base-url", default="http://localhost:11434", help="Ollama base URL.")
+    parser.add_argument("--model", default=get_default_ollama_model(), help="Ollama model name.")
+    parser.add_argument("--base-url", default=get_default_ollama_base_url(), help="Ollama base URL.")
     return parser.parse_args()
 
 

@@ -12,18 +12,23 @@ from pydantic import ValidationError
 from rtl_assistant.llm.config import get_default_ollama_base_url, get_default_ollama_model
 from rtl_assistant.llm.ollama import OllamaProvider
 from rtl_assistant.models.hardware_spec import HardwareSpec
-from rtl_assistant.models.rtl_generation import RTLGenerationResult, RTLGenerationStatus
-from rtl_assistant.rtl.generator import AIRTLGenerator
+from rtl_assistant.models.verification_plan import (
+    VerificationPlanGenerationResult,
+    VerificationPlanStatus,
+)
+from rtl_assistant.verification_plan.generator import AIVerificationPlanGenerator
 
 
 def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments for RTL generation."""
+    """Parse command-line arguments for verification-plan generation."""
 
-    parser = argparse.ArgumentParser(description="Generate SystemVerilog RTL from a validated HardwareSpec JSON file.")
+    parser = argparse.ArgumentParser(
+        description="Generate a structured verification plan from a validated HardwareSpec JSON file."
+    )
     parser.add_argument("spec_path", help="Path to the validated HardwareSpec JSON file.")
     parser.add_argument("--model", default=get_default_ollama_model(), help="Ollama model name.")
     parser.add_argument("--base-url", default=get_default_ollama_base_url(), help="Ollama base URL.")
-    parser.add_argument("--output", help="Optional path to save generated RTL.")
+    parser.add_argument("--output", help="Optional path to save the generated verification plan JSON.")
     parser.add_argument("--show-raw", action="store_true", help="Print raw model output on failure.")
     return parser.parse_args()
 
@@ -40,12 +45,14 @@ def load_hardware_spec(spec_path_str: str) -> HardwareSpec:
     return HardwareSpec.model_validate_json(raw_json)
 
 
-def print_success(result: RTLGenerationResult) -> None:
+def print_success(result: VerificationPlanGenerationResult) -> None:
     """Print a concise successful generation summary."""
 
-    rtl_text = result.rtl or ""
+    verification_plan = result.verification_plan
+    assert verification_plan is not None
+
     print("========================================")
-    print("AI RTL Generator")
+    print("AI Verification Plan Generator")
     print("========================================")
     print(f"Provider:       {result.provider}")
     print(f"Model:          {result.model}")
@@ -53,15 +60,22 @@ def print_success(result: RTLGenerationResult) -> None:
     print(f"Status:         {result.status.value}")
     print("")
     print(f"Module:         {result.module_name}")
-    print(f"RTL chars:      {len(rtl_text)}")
+    print(f"Test Cases:     {len(verification_plan.test_cases)}")
+    if result.reference_corrections:
+        print(f"Ref Corrections: {len(result.reference_corrections)}")
+    if verification_plan.coverage_targets:
+        print("")
+        print("Coverage Targets:")
+        for target in verification_plan.coverage_targets:
+            print(f"- {target}")
     print("========================================")
 
 
-def print_failure(result: RTLGenerationResult, show_raw: bool) -> None:
+def print_failure(result: VerificationPlanGenerationResult, show_raw: bool) -> None:
     """Print a concise failed generation summary."""
 
     print("========================================", file=sys.stderr)
-    print("AI RTL Generator", file=sys.stderr)
+    print("AI Verification Plan Generator", file=sys.stderr)
     print("========================================", file=sys.stderr)
     print(f"Provider:       {result.provider}", file=sys.stderr)
     print(f"Model:          {result.model}", file=sys.stderr)
@@ -69,23 +83,28 @@ def print_failure(result: RTLGenerationResult, show_raw: bool) -> None:
     print(f"Status:         {result.status.value}", file=sys.stderr)
     print(f"Error Type:     {result.error_type}", file=sys.stderr)
     print(f"Reason:         {result.error_message}", file=sys.stderr)
+    if result.validation_errors:
+        print("", file=sys.stderr)
+        print("Validation Errors:", file=sys.stderr)
+        for error in result.validation_errors:
+            print(f"- {error}", file=sys.stderr)
     if show_raw and result.raw_model_output:
         print("\nRaw Model Output:", file=sys.stderr)
         print(result.raw_model_output, file=sys.stderr)
     print("========================================", file=sys.stderr)
 
 
-def write_output(output_path_str: str, result: RTLGenerationResult) -> None:
-    """Write generated RTL text to a file."""
+def write_output(output_path_str: str, result: VerificationPlanGenerationResult) -> None:
+    """Write the generated verification plan JSON to a file."""
 
-    rtl_text = result.rtl
-    assert rtl_text is not None
+    verification_plan = result.verification_plan
+    assert verification_plan is not None
 
     output_path = Path(output_path_str)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(rtl_text, encoding="utf-8")
+    output_path.write_text(verification_plan.model_dump_json(indent=2), encoding="utf-8")
     print("")
-    print("Generated RTL saved to:")
+    print("Verification plan saved to:")
     print(output_path.resolve())
 
 
@@ -108,10 +127,10 @@ def main() -> int:
         return 1
 
     provider = OllamaProvider(model=args.model, base_url=args.base_url)
-    generator = AIRTLGenerator(provider)
+    generator = AIVerificationPlanGenerator(provider)
     result = generator.generate(hardware_spec)
 
-    if result.status == RTLGenerationStatus.SUCCESS:
+    if result.status == VerificationPlanStatus.SUCCESS:
         print_success(result)
         if args.output:
             write_output(args.output, result)

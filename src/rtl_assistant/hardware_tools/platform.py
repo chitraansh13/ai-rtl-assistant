@@ -1,17 +1,17 @@
-import sys
+import platform
 from pathlib import Path
 
 
 def is_windows_host() -> bool:
     """Return True when running on Windows."""
 
-    return sys.platform.startswith("win32")
+    return platform.system() == "Windows"
 
 
 def is_macos_host() -> bool:
     """Return True when running on macOS."""
 
-    return sys.platform.startswith("darwin")
+    return platform.system() == "Darwin"
 
 
 def to_wsl_path(path: str | Path) -> str:

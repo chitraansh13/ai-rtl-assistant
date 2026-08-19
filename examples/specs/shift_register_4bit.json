@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "module_name": "shift_register_4bit",
+  "design_type": "sequential",
+  "description": "4-bit left-shifting register with serial input, enable, and asynchronous active-low reset.",
+  "parameters": [],
+  "ports": [
+    {
+      "name": "clk",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "clock",
+      "description": "Positive-edge clock input."
+    },
+    {
+      "name": "rst_n",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "reset",
+      "description": "Asynchronous active-low reset."
+    },
+    {
+      "name": "serial_in",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "data",
+      "description": "Serial input shifted into bit 0."
+    },
+    {
+      "name": "en",
+      "direction": "input",
+      "width": 1,
+      "signed": false,
+      "role": "control",
+      "description": "Shift enable control."
+    },
+    {
+      "name": "q",
+      "direction": "output",
+      "width": 4,
+      "signed": false,
+      "role": "status",
+      "description": "Current 4-bit shift-register state."
+    }
+  ],
+  "clock": {
+    "signal": "clk",
+    "edge": "positive"
+  },
+  "reset": {
+    "signal": "rst_n",
+    "type": "asynchronous",
+    "polarity": "active_low",
+    "priority": "reset overrides shift behavior immediately while active",
+    "reset_values": {
+      "q": 0
+    }
+  },
+  "behavior": {
+    "description": "Asynchronously clears q when rst_n is low and otherwise shifts left on each positive clock edge when enabled.",
+    "operations": [
+      "SHIFT_LEFT",
+      "HOLD",
+      "RESET"
+    ],
+    "rules": [
+      "When rst_n is active low, q becomes 0 asynchronously.",
+      "When en is high, on each positive clock edge q shifts left by one bit.",
+      "When en is high, serial_in enters bit 0 on each positive clock edge.",
+      "When en is low, q holds its previous value."
+    ],
+    "assumptions": []
+  },
+  "tags": [
+    "shift_register",
+    "sequential",
+    "4bit",
+    "generalization"
+  ]
+}

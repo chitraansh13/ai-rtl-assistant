@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "module_name": "decoder_3to8",
+  "design_type": "combinational",
+  "description": "3-to-8 combinational decoder with one-hot output behavior.",
+  "parameters": [],
+  "ports": [
+    {
+      "name": "a",
+      "direction": "input",
+      "width": 3,
+      "signed": false,
+      "role": "control",
+      "description": "3-bit input select value."
+    },
+    {
+      "name": "y",
+      "direction": "output",
+      "width": 8,
+      "signed": false,
+      "role": "data",
+      "description": "8-bit one-hot decoded output."
+    }
+  ],
+  "clock": null,
+  "reset": null,
+  "behavior": {
+    "description": "Drives exactly one output bit high according to the 3-bit input value.",
+    "operations": [
+      "DECODE"
+    ],
+    "rules": [
+      "For input integer N from 0 through 7, y[N] = 1.",
+      "For input integer N from 0 through 7, every output bit other than y[N] = 0.",
+      "Exactly one output bit is high for every valid 3-bit input."
+    ],
+    "assumptions": []
+  },
+  "tags": [
+    "decoder",
+    "combinational",
+    "3to8",
+    "onehot",
+    "generalization"
+  ]
+}

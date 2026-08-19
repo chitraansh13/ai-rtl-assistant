@@ -7,6 +7,7 @@ from pathlib import Path
 repository_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repository_root / "src"))
 
+from rtl_assistant.llm.config import get_default_ollama_base_url, get_default_ollama_model
 from rtl_assistant.llm.ollama import OllamaProvider
 from rtl_assistant.models.llm import RequirementParseResult, RequirementStatus
 from rtl_assistant.spec.ai_parser import AIRequirementParser, apply_clarifications
@@ -17,8 +18,8 @@ def parse_arguments() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Parse a natural-language hardware requirement into HardwareSpec.")
     parser.add_argument("requirement", help="Natural-language hardware requirement text.")
-    parser.add_argument("--model", default="qwen2.5-coder:7b", help="Ollama model name.")
-    parser.add_argument("--base-url", default="http://localhost:11434", help="Ollama base URL.")
+    parser.add_argument("--model", default=get_default_ollama_model(), help="Ollama model name.")
+    parser.add_argument("--base-url", default=get_default_ollama_base_url(), help="Ollama base URL.")
     parser.add_argument("--output", help="Optional path to write the validated HardwareSpec JSON.")
     parser.add_argument("--answers", help="Optional JSON file containing clarification answers.")
     parser.add_argument("--show-raw", action="store_true", help="Print raw model output on failure.")

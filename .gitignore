@@ -15,3 +15,9 @@ __pycache__/
 
 # Generated reports
 reports/
+
+# Generated testbench / RTL outputs
+generated/
+
+# macOS Finder metadata
+.DS_Store
