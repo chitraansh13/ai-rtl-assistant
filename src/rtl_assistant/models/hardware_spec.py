@@ -3,6 +3,9 @@ import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from rtl_assistant.models.semantic_feature import SemanticFeature
+from rtl_assistant.models.semantics import HardwareSemantics, SemanticConstraints
+
 
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
@@ -126,7 +129,7 @@ class ResetSpec(BaseModel):
 class BehaviorSpec(BaseModel):
     """Structured but flexible behavioral description."""
 
-    description: str
+    description: str = "High-level behavior metadata omitted."
     operations: list[str] = Field(default_factory=list)
     rules: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
@@ -151,6 +154,9 @@ class HardwareSpec(BaseModel):
     ports: list[PortSpec]
     clock: ClockSpec | None = None
     reset: ResetSpec | None = None
+    semantics: HardwareSemantics | None = None
+    semantic_features: list[SemanticFeature] = Field(default_factory=list)
+    semantic_constraints: SemanticConstraints | None = None
     behavior: BehaviorSpec
     tags: list[str] = Field(default_factory=list)
 
@@ -206,5 +212,10 @@ class HardwareSpec(BaseModel):
                 raise ValueError(f"Reset signal '{self.reset.signal}' must be 1 bit wide")
             if reset_port.role != PortRole.RESET:
                 raise ValueError(f"Reset signal '{self.reset.signal}' must use role 'reset'")
+
+        if self.semantics is not None or self.semantic_constraints is not None:
+            from rtl_assistant.semantics.validator import validate_hardware_semantics
+
+            validate_hardware_semantics(self)
 
         return self

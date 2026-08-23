@@ -9,12 +9,12 @@ sys.path.insert(0, str(repository_root / "src"))
 
 from pydantic import ValidationError
 
+from rtl_assistant.models.compiled_verification_plan import CompiledVerificationPlan
 from rtl_assistant.models.hardware_spec import HardwareSpec
 from rtl_assistant.models.testbench_generation import (
     TestbenchGenerationResult,
     TestbenchGenerationStatus,
 )
-from rtl_assistant.models.verification_plan import VerificationPlan
 from rtl_assistant.testbench.deterministic import DeterministicTestbenchGenerator
 
 
@@ -22,10 +22,10 @@ def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments for testbench generation."""
 
     parser = argparse.ArgumentParser(
-        description="Generate a self-checking SystemVerilog testbench from a HardwareSpec and VerificationPlan."
+        description="Generate a self-checking SystemVerilog testbench from a HardwareSpec and CompiledVerificationPlan."
     )
     parser.add_argument("spec_path", help="Path to the validated HardwareSpec JSON file.")
-    parser.add_argument("plan_path", help="Path to the validated VerificationPlan JSON file.")
+    parser.add_argument("plan_path", help="Path to the compiled verification plan JSON file.")
     parser.add_argument("--output", help="Optional path to save generated testbench.")
     return parser.parse_args()
 
@@ -42,16 +42,16 @@ def load_hardware_spec(spec_path_str: str) -> HardwareSpec:
     return HardwareSpec.model_validate_json(raw_json)
 
 
-def load_verification_plan(plan_path_str: str) -> VerificationPlan:
-    """Read and validate a VerificationPlan JSON file."""
+def load_verification_plan(plan_path_str: str) -> CompiledVerificationPlan:
+    """Read and validate a compiled verification plan JSON file."""
 
     plan_path = Path(plan_path_str)
     if not plan_path.exists() or not plan_path.is_file():
-        raise FileNotFoundError(f"VerificationPlan file not found or is not a file: {plan_path}")
+        raise FileNotFoundError(f"Compiled verification plan file not found or is not a file: {plan_path}")
 
     raw_json = plan_path.read_text(encoding="utf-8")
     json.loads(raw_json)
-    return VerificationPlan.model_validate_json(raw_json)
+    return CompiledVerificationPlan.model_validate_json(raw_json)
 
 
 def print_success(result: TestbenchGenerationResult) -> None:
@@ -105,6 +105,12 @@ def write_output(output_path_str: str, result: TestbenchGenerationResult) -> Non
     print(output_path.resolve())
 
 
+def default_testbench_output_path(hardware_spec: HardwareSpec) -> Path:
+    """Return the default generated testbench output path for one validated module."""
+
+    return Path("generated") / f"{hardware_spec.module_name}_tb.sv"
+
+
 def main() -> int:
     args = parse_arguments()
 
@@ -129,8 +135,8 @@ def main() -> int:
 
     if result.status == TestbenchGenerationStatus.SUCCESS:
         print_success(result)
-        if args.output:
-            write_output(args.output, result)
+        output_path = Path(args.output) if args.output else default_testbench_output_path(hardware_spec)
+        write_output(str(output_path), result)
         return 0
 
     print_failure(result)

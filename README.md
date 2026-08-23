@@ -19,20 +19,41 @@ LLMs are useful for:
 
 But they are not trusted as correctness oracles. This repository combines local AI assistance with deterministic EDA tools and deterministic reference logic so that unsupported or invalid outputs fail safely instead of being guessed through.
 
+Recommended generated artifact naming:
+
+- RTL: `<module_name>.sv`
+- testbench: `<module_name>_tb.sv`
+
+Matching generated filenames to module names avoids Verilator `DECLFILENAME` warnings in the normal flow.
+
 ## Current Architecture
 
 ```text
 Natural Language Requirement
         ↓
-AI Requirement Parser
+AI Requirement Parser + Clarification
         ↓
-Clarification / HardwareSpec
+Final Enriched Requirement
+        ↓
+AI HardwareIntent
+        ↓
+Deterministic Semantic Compiler
+        ↓
+HardwareSpec
+  - executable semantics
+  - semantic provenance / features
+        ↓
+Generic Deterministic Evaluator
         ↓
 AI RTL Generator
         ↓
-AI Verification Planning
+AI Verification Intent
+        ↓
+Semantic-feature-aware Deterministic Verification Compiler
         ↓
 Deterministic Expected-Value / Reference Layer
+        ↓
+Compiled Verification Plan
         ↓
 Deterministic Testbench IR + Renderer
         ↓
@@ -52,16 +73,38 @@ Practical stage split:
 
 ```text
 AI-dependent:
-Requirement → HardwareSpec
+Requirement → HardwareIntent
 HardwareSpec → RTL
-HardwareSpec → VerificationPlan
+HardwareSpec → VerificationIntentPlan
 
 Deterministic:
-VerificationPlan → Testbench IR → SystemVerilog testbench
+HardwareIntent → HardwareSpec semantic AST
+HardwareIntent → HardwareSpec semantic provenance/features
+VerificationIntentPlan → CompiledVerificationPlan
+CompiledVerificationPlan → Testbench IR → SystemVerilog testbench
 RTL + testbench → lint / simulation / synthesis
 ```
 
 Future work will add richer failure classification and repair loops, but those are not complete yet.
+The first HardwareIntent compiler scope is combinational only. Sequential semantic IR is not complete yet, and existing sequential deterministic compilation still uses the current specialized sequential logic.
+
+## Deterministic Regression Coverage
+
+Deterministic regression tests are intended to validate behavior after the typed trust boundary without requiring Ollama.
+
+These regressions should focus on typed fixtures such as:
+
+- validated `HardwareIntent`
+- validated `HardwareSpec`
+- structured semantic AST / `semantic_features`
+- `VerificationIntentPlan`
+- `CompiledVerificationPlan`
+
+This keeps regression coverage stable even when LLM wording changes.
+
+Manual end-to-end smoke tests are still useful, but they require Ollama and the hardware toolchain. Those manual runs validate orchestration and AI behavior; the deterministic regression suite validates invariant-driven compilation, semantic evaluation, and compiled-plan behavior.
+
+Generated RTL or testbench artifacts are not the source of truth. The authoritative deterministic contract is the typed intent/spec/compiled-plan pipeline.
 
 ## Current Progress
 
@@ -79,9 +122,13 @@ Completed:
 - local Ollama provider integration
 - AI requirement parsing
 - ambiguity clarification handling
+- AI hardware-intent generation
+- deterministic hardware-intent compilation for combinational semantics
 - AI RTL generation
-- AI verification-plan generation
+- AI verification-intent generation
+- deterministic verification-intent compilation
 - deterministic expected-value/reference correction for supported semantics
+- typed combinational hardware semantic expressions and generic evaluation
 
 In progress:
 
@@ -106,6 +153,7 @@ This repository intentionally separates:
 Practical implications:
 
 - `HardwareSpec` validation is authoritative for specification structure.
+- deterministic HardwareIntent lowering is authoritative for low-level semantic AST construction.
 - deterministic reference logic is authoritative for supported expected-value semantics.
 - deterministic testbench rendering is authoritative for final SystemVerilog testbench structure.
 - Verilator, Icarus Verilog, and Yosys remain authoritative for tool-backed verification.
@@ -127,6 +175,7 @@ Today, manually written RTL/testbenches are present for the mux, ALU, and counte
 
 ```text
 src/rtl_assistant/
+  hardware_intent/
   hardware_tools/
   llm/
   models/
@@ -252,13 +301,13 @@ ollama serve
 
 - natural-language requirement parsing
 - AI RTL generation
-- AI VerificationPlan generation
+- AI verification-intent generation
 
 The configured model, currently `qwen2.5-coder:7b`, must already be downloaded for those stages.
 
 Once the model is downloaded, normal Ollama inference is local. Internet access is not required for ordinary local model execution.
 
-Important: deterministic Step 14 testbench rendering does **not** require Ollama once a valid `VerificationPlan` already exists.
+Important: deterministic Step 14 testbench rendering does **not** require Ollama once a valid compiled verification plan already exists.
 
 Deterministic verification tools such as:
 
@@ -320,7 +369,7 @@ Ollama does not need to remain running for deterministic testbench rendering or 
 python scripts/validate_spec.py examples/specs/alu_4bit.json
 ```
 
-### 2. Generate a verification plan
+### 2. Generate verification intent and a compiled verification plan
 
 ```bash
 python scripts/generate_verification_plan.py \
@@ -342,7 +391,7 @@ python scripts/generate_testbench.py \
   --output generated/alu_4bit_tb.sv
 ```
 
-This step is deterministic and does **not** require Ollama once a valid `HardwareSpec` and `VerificationPlan` already exist.
+This step is deterministic and does **not** require Ollama once a valid `HardwareSpec` and compiled verification plan already exist.
 
 ### 4. Run a known-good deterministic verification example
 
@@ -393,7 +442,7 @@ python scripts/run_synthesis.py \
 - Hardware-tool adapters isolate OS-specific invocation behavior.
 - Windows currently relies on WSL for Verilator and Yosys.
 - macOS and Linux use native Verilator and Yosys binaries.
-- The deterministic Step 14 renderer is offline once `HardwareSpec` and `VerificationPlan` are available.
+- The deterministic Step 14 renderer is offline once `HardwareSpec` and a compiled verification plan are available.
 
 ## Teammate Quick Start
 
@@ -407,7 +456,7 @@ That guide is intentionally practical and macOS-friendly.
 
 - the local 7B model can still produce invalid plans or invalid RTL
 - deterministic reference support is still expanding
-- unsupported VerificationPlan language is rejected rather than guessed
+- unsupported verification intent or compiled-plan semantics are rejected rather than guessed
 - Step 14 sequential generalization is still being validated
 - deterministic testbench rendering depends on structured plan language it can safely translate
 - full failure classification and repair loops are not implemented yet

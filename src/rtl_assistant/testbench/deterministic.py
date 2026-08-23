@@ -1,13 +1,13 @@
 import re
 import time
 
+from rtl_assistant.models.compiled_verification_plan import CompiledVerificationPlan
 from rtl_assistant.models.hardware_spec import DesignType, HardwareSpec
 from rtl_assistant.models.testbench_generation import (
     TestbenchGenerationMode,
     TestbenchGenerationResult,
     TestbenchGenerationStatus,
 )
-from rtl_assistant.models.verification_plan import VerificationPlan
 from rtl_assistant.testbench.ir import TestbenchPlan
 from rtl_assistant.testbench.renderer import render_testbench
 from rtl_assistant.testbench.translator import (
@@ -25,19 +25,19 @@ class DeterministicTestbenchGenerator:
     def generate(
         self,
         hardware_spec: HardwareSpec,
-        verification_plan: VerificationPlan,
+        compiled_plan: CompiledVerificationPlan,
     ) -> TestbenchGenerationResult:
         """Translate, render, and validate a deterministic testbench."""
 
         started_at = time.perf_counter()
 
         try:
-            testbench_plan = translate_verification_plan(hardware_spec, verification_plan)
+            testbench_plan = translate_verification_plan(hardware_spec, compiled_plan)
         except TestbenchTranslationError as exc:
             return self._failure_result(
                 hardware_spec=hardware_spec,
                 started_at=started_at,
-                test_count=len(verification_plan.test_cases),
+                test_count=len(compiled_plan.cases),
                 error_type=exc.error_type,
                 errors=[f"{exc.error_type}: {exc.message}"],
             )
@@ -53,7 +53,7 @@ class DeterministicTestbenchGenerator:
                 errors=[f"TESTBENCH_RENDER_ERROR: {exc}"],
             )
 
-        errors = run_testbench_sanity_checks(hardware_spec, verification_plan, testbench_text)
+        errors = run_testbench_sanity_checks(hardware_spec, compiled_plan, testbench_text)
         if errors:
             return self._failure_result(
                 hardware_spec=hardware_spec,
@@ -110,7 +110,7 @@ class DeterministicTestbenchGenerator:
 
 def run_testbench_sanity_checks(
     hardware_spec: HardwareSpec,
-    verification_plan: VerificationPlan,
+    compiled_plan: CompiledVerificationPlan,
     testbench_text: str,
 ) -> list[str]:
     """Run lightweight deterministic checks on rendered testbench text."""
@@ -140,8 +140,8 @@ def run_testbench_sanity_checks(
                 errors.append(f"MISSING_REQUIRED_PORT: DUT port '{port.name}' is missing from the testbench instantiation.")
 
     errors.extend(validate_output_ports_not_driven(hardware_spec, testbench_text))
-    errors.extend(validate_verification_plan_coverage(verification_plan, testbench_text))
-    errors.extend(validate_expected_output_checks(hardware_spec, verification_plan, testbench_text))
+    errors.extend(validate_verification_plan_coverage(compiled_plan, testbench_text))
+    errors.extend(validate_expected_output_checks(compiled_plan, testbench_text))
     errors.extend(validate_stimulus_process_structure(hardware_spec, testbench_text))
     errors.extend(validate_clock_and_reset_usage(hardware_spec, testbench_text))
     errors.extend(validate_finish_and_self_checking(testbench_text))
@@ -177,12 +177,12 @@ def validate_output_ports_not_driven(hardware_spec: HardwareSpec, testbench_text
 
 
 def validate_verification_plan_coverage(
-    verification_plan: VerificationPlan,
+    compiled_plan: CompiledVerificationPlan,
     testbench_text: str,
 ) -> list[str]:
     """Require every VerificationPlan test-case id to appear in the testbench."""
 
-    missing_ids = [test_case.id for test_case in verification_plan.test_cases if test_case.id not in testbench_text]
+    missing_ids = [test_case.id for test_case in compiled_plan.cases if test_case.id not in testbench_text]
     if not missing_ids:
         return []
     return [
@@ -191,19 +191,14 @@ def validate_verification_plan_coverage(
     ]
 
 
-def validate_expected_output_checks(
-    hardware_spec: HardwareSpec,
-    verification_plan: VerificationPlan,
-    testbench_text: str,
-) -> list[str]:
+def validate_expected_output_checks(compiled_plan: CompiledVerificationPlan, testbench_text: str) -> list[str]:
     """Require inline comparison evidence for each planned expected output."""
 
-    output_names = [port.name for port in hardware_spec.ports if port.direction.value == "output"]
-    test_ids = [test_case.id for test_case in verification_plan.test_cases]
+    test_ids = [test_case.id for test_case in compiled_plan.cases]
     missing_checks: list[str] = []
 
-    for index, test_case in enumerate(verification_plan.test_cases):
-        expected_outputs = extract_expected_output_names(test_case.expected, output_names)
+    for index, test_case in enumerate(compiled_plan.cases):
+        expected_outputs = [check.signal for check in test_case.checks]
         if not expected_outputs:
             continue
 
@@ -211,11 +206,7 @@ def validate_expected_output_checks(
         if test_region is None:
             continue
 
-        absent_outputs = [
-            output_name
-            for output_name in expected_outputs
-            if not has_output_comparison(test_region, output_name)
-        ]
+        absent_outputs = [output_name for output_name in expected_outputs if not has_output_comparison(test_region, output_name)]
         if absent_outputs:
             missing_checks.append(f"{test_case.id} -> {', '.join(absent_outputs)}")
 

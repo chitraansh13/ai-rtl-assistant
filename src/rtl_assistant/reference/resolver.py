@@ -14,6 +14,14 @@ from rtl_assistant.reference.handlers.alu import (
     extract_alu_stimulus_vector,
     resolve_alu_operation_from_vector,
 )
+from rtl_assistant.reference.handlers.shift import (
+    behavior_mentions_shift_semantics,
+    compute_shift_next_state,
+    contains_shift_hold_language,
+    infer_serial_input_signal,
+    infer_shift_direction,
+    infer_shift_state_output,
+)
 
 
 @dataclass(slots=True)
@@ -36,6 +44,7 @@ class DeterministicReferenceResolver(ReferenceResolver):
             SelectRoutingResolver(),
             OneHotDecoderResolver(),
             FixedWidthCounterResolver(),
+            SimpleShiftRegisterResolver(),
         ]
 
     def can_resolve(self, hardware_spec: HardwareSpec, test_case: VerificationTestCase) -> bool:
@@ -337,6 +346,163 @@ class FixedWidthCounterResolver(ReferenceResolver):
         )
 
 
+class SimpleShiftRegisterResolver(ReferenceResolver):
+    """Resolve simple fixed-width serial shift-register transitions when literals are explicit."""
+
+    resolver_name = "simple_shift_register"
+
+    def can_resolve(self, hardware_spec: HardwareSpec, test_case: VerificationTestCase) -> bool:
+        if hardware_spec.design_type != DesignType.SEQUENTIAL or hardware_spec.clock is None:
+            return False
+        if not behavior_mentions_shift_semantics(hardware_spec):
+            return False
+
+        state_name = infer_shift_state_output(hardware_spec)
+        serial_input = infer_serial_input_signal(hardware_spec)
+        direction = infer_shift_direction(hardware_spec)
+        return state_name is not None and serial_input is not None and direction is not None
+
+    def resolve(
+        self,
+        hardware_spec: HardwareSpec,
+        test_case: VerificationTestCase,
+    ) -> ReferenceResolution:
+        state_name = infer_shift_state_output(hardware_spec)
+        serial_input_name = infer_serial_input_signal(hardware_spec)
+        direction = infer_shift_direction(hardware_spec)
+        state_port = find_port(hardware_spec, state_name) if state_name is not None else None
+
+        if state_name is None or serial_input_name is None or direction is None or state_port is None:
+            return unsupported_resolution(
+                self.resolver_name,
+                "Shift-register state/output, serial input, direction, or width could not be determined safely.",
+            )
+
+        reset_value = extract_reset_value(hardware_spec, state_name) or 0
+        simulation_result = simulate_shift_register_test(
+            hardware_spec=hardware_spec,
+            test_case=test_case,
+            state_name=state_name,
+            serial_input_name=serial_input_name,
+            width=state_port.width,
+            direction=direction,
+            reset_value=reset_value,
+        )
+        if simulation_result is None:
+            return unsupported_resolution(
+                self.resolver_name,
+                "Shift-register transition needs a known state provenance plus explicit legal stimulus and active-edge semantics.",
+            )
+
+        expected_state, explanation = simulation_result
+        return resolved_resolution(
+            hardware_spec=hardware_spec,
+            resolver_name=self.resolver_name,
+            expected_values={state_name: expected_state},
+            explanation=explanation,
+        )
+
+
+def simulate_shift_register_test(
+    hardware_spec: HardwareSpec,
+    test_case: VerificationTestCase,
+    state_name: str,
+    serial_input_name: str,
+    width: int,
+    direction: str,
+    reset_value: int,
+) -> tuple[int, str] | None:
+    """Simulate one simple shift-register test from ordered plan actions when provenance is explicit."""
+
+    current_state = extract_state_precondition(test_case, state_name)
+    state_known = current_state is not None
+    explanation_parts: list[str] = []
+    if state_known:
+        explanation_parts.append("Started from an explicit legal precondition.")
+
+    reset_signal = hardware_spec.reset.signal if hardware_spec.reset is not None else None
+    reset_asserted = False
+    enable_signal = find_enable_signal_name(hardware_spec)
+    enable_state = True if enable_signal is None else None
+    serial_in_value: int | None = None
+
+    for item in [*test_case.setup, *test_case.stimulus]:
+        parsed_assignment = parse_signal_assignment(
+            item,
+            {
+                name
+                for name in [reset_signal, enable_signal, serial_input_name]
+                if isinstance(name, str)
+            }
+            or None,
+        )
+        if parsed_assignment is not None:
+            signal_name, literal_value = parsed_assignment
+            if signal_name == reset_signal and isinstance(literal_value, int):
+                reset_asserted = is_reset_asserted_value(hardware_spec, literal_value)
+                if reset_asserted and hardware_spec.reset is not None and hardware_spec.reset.type == ResetType.ASYNCHRONOUS:
+                    current_state = reset_value
+                    state_known = True
+                    explanation_parts.append("Asynchronous reset assertion established the reset state.")
+                continue
+            if signal_name == enable_signal and isinstance(literal_value, int):
+                enable_state = literal_value != 0
+                continue
+            if signal_name == serial_input_name and isinstance(literal_value, int):
+                serial_in_value = literal_value
+                continue
+
+        if reset_signal is not None:
+            phrase_reset_state = parse_reset_phrase_state(hardware_spec, item)
+            if phrase_reset_state is not None:
+                reset_asserted = phrase_reset_state
+                if reset_asserted and hardware_spec.reset is not None and hardware_spec.reset.type == ResetType.ASYNCHRONOUS:
+                    current_state = reset_value
+                    state_known = True
+                    explanation_parts.append("Asynchronous reset assertion established the reset state.")
+                continue
+
+        edge_count = extract_active_edge_count(hardware_spec, item.lower())
+        if edge_count is None:
+            continue
+
+        if reset_asserted:
+            if hardware_spec.reset is not None and hardware_spec.reset.type == ResetType.SYNCHRONOUS:
+                current_state = reset_value
+                state_known = True
+                explanation_parts.append("Synchronous reset plus active edge established the reset state.")
+                continue
+            if hardware_spec.reset is not None and hardware_spec.reset.type == ResetType.ASYNCHRONOUS:
+                current_state = reset_value
+                state_known = True
+                explanation_parts.append("Asynchronous reset remained active across the referenced edge.")
+                continue
+
+        if not state_known or current_state is None:
+            return None
+
+        effective_enable = True if enable_state is None else enable_state
+        if effective_enable is False or contains_shift_hold_language(item):
+            explanation_parts.append("Disabled update control preserved the known state across the active edge(s).")
+            continue
+
+        if not isinstance(serial_in_value, int):
+            return None
+
+        for _ in range(edge_count):
+            current_state = compute_shift_next_state(current_state, serial_in_value, width, direction)
+        state_known = True
+        explanation_parts.append("Propagated the known state across the requested active edge(s).")
+
+    if not state_known or current_state is None:
+        return None
+
+    explanation = " ".join(dict.fromkeys(explanation_parts)) or (
+        "Computed shift-register state deterministically from explicit legal state provenance and stimulus."
+    )
+    return current_state, explanation
+
+
 def resolved_resolution(
     hardware_spec: HardwareSpec,
     resolver_name: str,
@@ -599,22 +765,24 @@ def extract_state_precondition(test_case: VerificationTestCase, state_name: str)
     """Extract a conceptual starting state without treating it as a drive command."""
 
     search_fields = [" ".join(test_case.setup), test_case.description]
+    literal_pattern = r"([A-Za-z0-9_'xbodhXBODH]+)"
     patterns = [
-        rf"\bstarting\s+{re.escape(state_name)}\s*=\s*(\d+)\b",
-        rf"\bstart\s+{re.escape(state_name)}\s*=\s*(\d+)\b",
-        rf"\b{re.escape(state_name)}\s+has\s+reached\s+(\d+)\b",
-        rf"\bbring\s+{re.escape(state_name)}\s+to\s+(\d+)\b",
-        rf"\breach\s+{re.escape(state_name)}\s*=\s*(\d+)\b",
-        rf"\bprecondition:\s*{re.escape(state_name)}\s*(?:is|=)\s*(\d+)\b",
-        rf"\b{re.escape(state_name)}\s+is\s+currently\s+at\s+(\d+)\b",
-        rf"\bat\s+{re.escape(state_name)}\s*=\s*(\d+)\b",
+        rf"\bstarting\s+{re.escape(state_name)}\s*=\s*{literal_pattern}\b",
+        rf"\bstart\s+{re.escape(state_name)}\s*=\s*{literal_pattern}\b",
+        rf"\b{re.escape(state_name)}\s+has\s+reached\s+{literal_pattern}\b",
+        rf"\bbring\s+{re.escape(state_name)}\s+to\s+{literal_pattern}\b",
+        rf"\breach\s+{re.escape(state_name)}\s*=\s*{literal_pattern}\b",
+        rf"\bprecondition:\s*{re.escape(state_name)}\s*(?:is|=)\s*{literal_pattern}\b",
+        rf"\b{re.escape(state_name)}\s+is\s+currently\s+at\s+{literal_pattern}\b",
+        rf"\bat\s+{re.escape(state_name)}\s*=\s*{literal_pattern}\b",
     ]
 
     for field in search_fields:
         for pattern in patterns:
             match = re.search(pattern, field, re.IGNORECASE)
             if match is not None:
-                return int(match.group(1), 10)
+                literal_value = parse_literal_value(match.group(1))
+                return literal_value if isinstance(literal_value, int) else None
     return None
 
 
@@ -624,16 +792,24 @@ def extract_active_edge_count(hardware_spec: HardwareSpec, text: str) -> int | N
     if hardware_spec.clock is None:
         return None
 
+    clock_name = re.escape(hardware_spec.clock.signal)
     if hardware_spec.clock.edge.value == "positive":
-        edge_pattern = r"(?:rising|positive|active)\s+edge|0->1\s+transition"
+        edge_pattern = (
+            rf"(?:rising|positive|active)\s+edge|0->1\s+transition|posedge(?:\s+{clock_name})?|"
+            rf"{clock_name}\s+rising\s+edge|rising\s+edge\s+of\s+{clock_name}"
+        )
     else:
-        edge_pattern = r"(?:falling|negative|active)\s+edge|1->0\s+transition"
+        edge_pattern = (
+            rf"(?:falling|negative|active)\s+edge|1->0\s+transition|negedge(?:\s+{clock_name})?|"
+            rf"{clock_name}\s+falling\s+edge|falling\s+edge\s+of\s+{clock_name}"
+        )
 
     patterns = [
         rf"\b(\d+)\s+{edge_pattern}s?\b",
         rf"\bone\s+{edge_pattern}\b",
         rf"\bnext\s+{edge_pattern}\b",
         rf"\ban?\s+additional\s+{edge_pattern}\b",
+        rf"\bapply\s+{edge_pattern}\b",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -660,6 +836,40 @@ def extract_enable_state(hardware_spec: HardwareSpec, text: str) -> bool | None:
     if re.search(rf"\b(?:{pattern})\s*=\s*1\b", text, re.IGNORECASE) or contains_any(text, ["enable high", "enabled"]):
         return True
     if re.search(rf"\b(?:{pattern})\s*=\s*0\b", text, re.IGNORECASE) or contains_any(text, ["enable low", "disabled"]):
+        return False
+    return None
+
+
+def find_enable_signal_name(hardware_spec: HardwareSpec) -> str | None:
+    """Return a simple enable-like input signal when present."""
+
+    for port in hardware_spec.ports:
+        if port.direction.value == "input" and port.name.lower() in {"en", "enable"}:
+            return port.name
+    return None
+
+
+def is_reset_asserted_value(hardware_spec: HardwareSpec, literal_value: int) -> bool:
+    """Return True when a concrete reset value represents active reset."""
+
+    if hardware_spec.reset is None:
+        return False
+    if hardware_spec.reset.polarity.value == "active_high":
+        return literal_value == 1
+    return literal_value == 0
+
+
+def parse_reset_phrase_state(hardware_spec: HardwareSpec, item: str) -> bool | None:
+    """Interpret a reset assert/deassert phrase without relying on signal=value syntax."""
+
+    if hardware_spec.reset is None:
+        return None
+
+    lower_item = item.lower()
+    reset_signal = hardware_spec.reset.signal.lower()
+    if re.search(rf"\bassert\s+{re.escape(reset_signal)}\b", lower_item) or "assert reset" in lower_item:
+        return True
+    if re.search(rf"\bdeassert\s+{re.escape(reset_signal)}\b", lower_item) or "deassert reset" in lower_item:
         return False
     return None
 

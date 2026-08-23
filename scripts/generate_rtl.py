@@ -83,10 +83,35 @@ def write_output(output_path_str: str, result: RTLGenerationResult) -> None:
 
     output_path = Path(output_path_str)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(rtl_text, encoding="utf-8")
+    output_path.write_text(normalize_rtl_output_text(rtl_text), encoding="utf-8")
     print("")
     print("Generated RTL saved to:")
     print(output_path.resolve())
+
+
+def normalize_rtl_output_text(rtl_text: str) -> str:
+    """Normalize generated RTL for stable tool-compatible file output."""
+
+    return rtl_text.rstrip() + "\n"
+
+
+def default_rtl_output_path(hardware_spec: HardwareSpec) -> Path:
+    """Return the default generated RTL output path for one validated module."""
+
+    return Path("generated") / f"{hardware_spec.module_name}.sv"
+
+
+def warn_if_output_filename_mismatches_module(output_path: Path, module_name: str) -> None:
+    """Warn when the explicit output filename stem does not match the validated module name."""
+
+    if output_path.stem == module_name:
+        return
+
+    print(
+        f"WARNING: Output filename '{output_path.name}' does not match module name '{module_name}'. "
+        f"Verilator may report DECLFILENAME. Recommended filename: '{module_name}.sv'.",
+        file=sys.stderr,
+    )
 
 
 def main() -> int:
@@ -113,8 +138,10 @@ def main() -> int:
 
     if result.status == RTLGenerationStatus.SUCCESS:
         print_success(result)
+        output_path = Path(args.output) if args.output else default_rtl_output_path(hardware_spec)
         if args.output:
-            write_output(args.output, result)
+            warn_if_output_filename_mismatches_module(output_path, hardware_spec.module_name)
+        write_output(str(output_path), result)
         return 0
 
     print_failure(result, show_raw=args.show_raw)

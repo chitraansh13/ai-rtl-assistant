@@ -67,7 +67,8 @@ def render_dut_instantiation(hardware_spec: HardwareSpec) -> list[str]:
 def render_clock_process(hardware_spec: HardwareSpec) -> list[str]:
     """Render a simple deterministic clock generator for sequential DUTs."""
 
-    assert hardware_spec.clock is not None
+    if hardware_spec.clock is None:
+        raise ValueError("Clock process requested for HardwareSpec without a clock")
     clock_name = hardware_spec.clock.signal
     return [
         "initial begin",
@@ -138,20 +139,24 @@ def render_action(hardware_spec: HardwareSpec, action: TestbenchAction) -> list[
     """Render one deterministic action."""
 
     if action.type == TestbenchActionType.SET_INPUT:
-        assert action.assignment is not None
+        if action.assignment is None:
+            raise ValueError("SET_INPUT render action requires assignment payload")
         port_width = find_port_width(hardware_spec, action.assignment.signal)
         if port_width is None:
             raise ValueError(f"Unknown input signal during render: {action.assignment.signal}")
         return [f"{action.assignment.signal} = {render_sv_literal(port_width, action.assignment.value)};"]
 
     if action.type == TestbenchActionType.ACTIVE_CLOCK_EDGE:
-        assert hardware_spec.clock is not None
+        if hardware_spec.clock is None:
+            raise ValueError("ACTIVE_CLOCK_EDGE render action requires HardwareSpec clock metadata")
         edge_keyword = "posedge" if hardware_spec.clock.edge.value == "positive" else "negedge"
         return [f"@({edge_keyword} {hardware_spec.clock.signal});", "#1;"]
 
     if action.type == TestbenchActionType.REPEAT_ACTIVE_EDGES:
-        assert hardware_spec.clock is not None
-        assert action.count is not None
+        if hardware_spec.clock is None:
+            raise ValueError("REPEAT_ACTIVE_EDGES render action requires HardwareSpec clock metadata")
+        if action.count is None:
+            raise ValueError("REPEAT_ACTIVE_EDGES render action requires count payload")
         edge_keyword = "posedge" if hardware_spec.clock.edge.value == "positive" else "negedge"
         return [
             f"repeat ({action.count}) begin",
@@ -203,7 +208,8 @@ def render_mismatch_predicate(hardware_spec: HardwareSpec, check: ExpectedCheck)
             )
         return f"{check.signal} !== {check.reference_signal}"
 
-    assert check.value is not None
+    if check.value is None:
+        raise ValueError(f"Literal expected check for '{check.signal}' requires value")
     return f"{check.signal} !== {render_sv_literal(actual_width, check.value)}"
 
 
@@ -233,7 +239,8 @@ def find_port_width(hardware_spec: HardwareSpec, signal_name: str) -> int | None
 def inactive_reset_value(hardware_spec: HardwareSpec) -> int:
     """Return the reset signal's inactive value from HardwareSpec polarity."""
 
-    assert hardware_spec.reset is not None
+    if hardware_spec.reset is None:
+        raise ValueError("Inactive reset value requested for HardwareSpec without reset metadata")
     return 0 if hardware_spec.reset.polarity.value == "active_high" else 1
 
 

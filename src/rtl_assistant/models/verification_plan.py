@@ -3,8 +3,11 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from rtl_assistant.models.compiled_verification_plan import CompiledVerificationPlan
 from rtl_assistant.models.hardware_spec import DesignType
 from rtl_assistant.models.reference import ReferenceCorrection
+from rtl_assistant.models.verification_common import TestCategory
+from rtl_assistant.models.verification_intent import VerificationIntentPlan
 
 
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
@@ -16,21 +19,6 @@ class VerificationPlanStatus(str, Enum):
 
     SUCCESS = "SUCCESS"
     FAIL = "FAIL"
-
-
-class TestCategory(str, Enum):
-    """High-level verification test categories."""
-
-    BASIC = "BASIC"
-    FUNCTIONAL = "FUNCTIONAL"
-    RESET = "RESET"
-    CONTROL = "CONTROL"
-    EDGE_CASE = "EDGE_CASE"
-    BOUNDARY = "BOUNDARY"
-    STATE_TRANSITION = "STATE_TRANSITION"
-    ARITHMETIC = "ARITHMETIC"
-    INVALID_OR_GUARDED = "INVALID_OR_GUARDED"
-    OTHER = "OTHER"
 
 
 def validate_non_empty_text(value: str, field_name: str) -> str:
@@ -82,7 +70,7 @@ class VerificationTestCase(BaseModel):
 
 
 class VerificationPlan(BaseModel):
-    """Validated structured verification intent derived from a HardwareSpec."""
+    """Legacy free-form verification plan kept for transitional compatibility."""
 
     schema_version: str = "1.0"
     module_name: str
@@ -121,10 +109,12 @@ class VerificationPlan(BaseModel):
 
 
 class VerificationPlanGenerationResult(BaseModel):
-    """Structured outcome of generating a verification plan from a HardwareSpec."""
+    """Structured outcome of generating verification intent and a compiled plan from a HardwareSpec."""
 
     status: VerificationPlanStatus
     module_name: str
+    verification_intent: VerificationIntentPlan | None = None
+    compiled_plan: CompiledVerificationPlan | None = None
     verification_plan: VerificationPlan | None = None
     provider: str
     model: str
@@ -157,8 +147,10 @@ class VerificationPlanGenerationResult(BaseModel):
         """Enforce consistency between status, plan presence, and errors."""
 
         if self.status == VerificationPlanStatus.SUCCESS:
-            if self.verification_plan is None:
-                raise ValueError("SUCCESS result requires a validated verification_plan")
+            if self.verification_intent is None:
+                raise ValueError("SUCCESS result requires a validated verification_intent")
+            if self.compiled_plan is None:
+                raise ValueError("SUCCESS result requires a validated compiled_plan")
             if self.error_type is not None:
                 raise ValueError("SUCCESS result requires error_type to be None")
             if self.error_message is not None:
@@ -166,7 +158,10 @@ class VerificationPlanGenerationResult(BaseModel):
             if self.validation_errors:
                 raise ValueError("SUCCESS result requires validation_errors to be empty")
 
-        if self.status == VerificationPlanStatus.FAIL and self.verification_plan is not None:
-            raise ValueError("FAIL result cannot include an approved verification_plan")
+        if self.status == VerificationPlanStatus.FAIL:
+            if self.verification_intent is not None:
+                raise ValueError("FAIL result cannot include an approved verification_intent")
+            if self.compiled_plan is not None:
+                raise ValueError("FAIL result cannot include an approved compiled_plan")
 
         return self

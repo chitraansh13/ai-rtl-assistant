@@ -20,6 +20,52 @@ class RequirementStatus(str, Enum):
     FAIL = "FAIL"
 
 
+class BehavioralObligationSource(str, Enum):
+    """Deterministic evidence source for one requirement-level behavior obligation."""
+
+    EXPLICIT_REQUIREMENT = "explicit_requirement"
+    CLARIFICATION = "clarification"
+
+
+class BehavioralObligation(BaseModel):
+    """Lightweight requirement fact that preserves conditional behavior without encoding executable intent."""
+
+    target: str
+    condition: str | None = None
+    when_true: str
+    when_false: str | None = None
+    complete: bool
+    source: BehavioralObligationSource
+    evidence: str
+
+    @field_validator("target", "when_true", "evidence")
+    @classmethod
+    def validate_required_obligation_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Behavioral obligation text cannot be empty")
+        return stripped
+
+    @field_validator("condition", "when_false")
+    @classmethod
+    def normalize_optional_obligation_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @model_validator(mode="after")
+    def validate_completeness(self) -> "BehavioralObligation":
+        if self.condition is None:
+            if self.when_false is not None:
+                raise ValueError("Unconditional behavior cannot define when_false")
+            if not self.complete:
+                raise ValueError("Unconditional behavior obligations are complete")
+        elif self.complete != (self.when_false is not None):
+            raise ValueError("Conditional behavior is complete exactly when an otherwise behavior is present")
+        return self
+
+
 class LLMResponse(BaseModel):
     """Structured result returned by an LLM provider."""
 
@@ -68,6 +114,7 @@ class ClarificationQuestion(BaseModel):
 
     id: str
     field: str
+    semantic_key: str | None = None
     question: str
     reason: str
     required: bool = True
@@ -82,6 +129,14 @@ class ClarificationQuestion(BaseModel):
             raise ValueError("Field cannot be empty")
         return stripped
 
+    @field_validator("semantic_key")
+    @classmethod
+    def validate_optional_semantic_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
 
 class RequirementAnalysis(BaseModel):
     """Structured ambiguity analysis over the original user requirement."""
@@ -93,6 +148,7 @@ class RequirementAnalysis(BaseModel):
     ambiguous: list[str] = Field(default_factory=list)
     clarification_questions: list[ClarificationQuestion] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    behavioral_obligations: list[BehavioralObligation] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_invariants(self) -> "RequirementAnalysis":
